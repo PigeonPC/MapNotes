@@ -3,6 +3,7 @@ import React, { useRef, useState } from 'react';
 import {
   Alert,
   Button,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 
 export default function App() {
   const [markers, setMarkers] = useState([]); // Sætter use state for markers på kortet
@@ -25,12 +27,62 @@ export default function App() {
   const [note, setNote] = useState('');
   const [editingMarkerId, setEditingMarkerId] = useState(null); // Holder styr på hvilken marker der redigeres
   const [viewingMarker, setViewingMarker] = useState(null); // Marker der vises uden redigering
+  const [imageUri, setImageUri] = useState(null); // Holder styr på det valgte billede
 
   function addMarker(event) {
     const coordinate = event.nativeEvent.coordinate; // Finder koordinater for tryk
 
     setSelectedCoordinate(coordinate); // Gemmer koordinater midlertidigt
     setModalVisible(true); // Åbner formularen
+  }
+
+
+  // Åbner telefonens galleri og vælger et billede
+  async function pickImage() {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      // Gemmer billedets URI hvis brugeren vælger et billede
+      if (!result.canceled && result.assets?.length > 0) {
+        setImageUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Fejl', 'Kunne ikke åbne billedgalleriet.');
+    }
+  }
+
+
+  // Åbner telefonens kamera og tager et billede
+  async function takePhoto() {
+    try {
+      // Spørger brugeren om tilladelse til kameraet
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (status !== 'granted') {
+        Alert.alert('Ingen tilladelse', 'Appen skal bruge kameraet for at tage billeder.');
+        return;
+      }
+
+      // Åbner kameraet
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      // Gemmer billedets URI hvis brugeren tager et billede
+      if (!result.canceled && result.assets?.length > 0) {
+        setImageUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Fejl', 'Kunne ikke åbne kameraet.');
+    }
   }
 
 
@@ -41,6 +93,7 @@ export default function App() {
     setTitle(marker.title);
     setNote(marker.note);
     setModalVisible(true);
+    setImageUri(marker.imageUri || null); // Indlæser markerens eksisterende billede
   }
 
   // Viser en markers titel og note uden at åbne redigering
@@ -94,11 +147,14 @@ export default function App() {
       return;
     }
 
+
     const markerData = {
       coordinate: selectedCoordinate,
       title: title.trim() || 'Unavngivet sted', // Standardtitel hvis feltet er tomt
       note: note.trim(), // Noten må gerne være tom
+      imageUri, // Gemmer billedets URI sammen med markeren
     };
+
 
     if (editingMarkerId !== null) {
       // Opdaterer den eksisterende marker
@@ -131,6 +187,7 @@ export default function App() {
     setTitle('');
     setNote('');
     setEditingMarkerId(null);
+    setImageUri(null); // Nulstiller billedet når formularen lukkes
   }
 
   // Henter telefonens aktuelle GPS-lokation
@@ -240,6 +297,36 @@ export default function App() {
               textAlignVertical="top"
             />
 
+
+
+            {/* Vælger billede fra galleri eller tager et nyt med kameraet */}
+            <Button
+              title="Vælg billede fra galleri"
+              onPress={pickImage}
+            />
+
+            <Button
+              title="Tag billede"
+              onPress={takePhoto}
+            />
+
+
+            {/* Viser det valgte billede og giver mulighed for at fjerne det */}
+            {imageUri && (
+              <View>
+                <Image
+                  source={{ uri: imageUri }}
+                  style={styles.markerImage}
+                />
+                <Button
+                  title="Fjern billede"
+                  color="#dc2626"
+                  onPress={() => setImageUri(null)}
+                />
+              </View>
+            )}
+
+
             <View style={styles.buttonRow}>
               <Button title="Annuller" onPress={closeModal} />
               <Button
@@ -275,6 +362,16 @@ export default function App() {
                 Ingen note tilføjet.
               </Text>
             )}
+
+
+            {/* Viser billedet der er gemt på markeren */}
+            {viewingMarker?.imageUri && (
+              <Image
+                source={{ uri: viewingMarker.imageUri }}
+                style={styles.markerImage}
+              />
+            )}
+
 
 
             <View style={styles.buttonRow}>
@@ -359,5 +456,12 @@ const styles = StyleSheet.create({
     color: '#888',
     fontStyle: 'italic',
     marginBottom: 20,
+  },
+  markerImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 8,
+    marginTop: 12,
+    marginBottom: 12,
   },
 });
