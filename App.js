@@ -6,7 +6,15 @@ import MapView from 'react-native-maps';
 export default function App() {
   return (
     <View style={styles.container}>
-      <MapView style={styles.map} />
+      <MapView
+        style={styles.map}
+        initialRegion={{ //Starter position i KBH
+          latitude: 55.6761,
+          longitude: 12.5683,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        }}
+      />
     </View>
   );
 }
