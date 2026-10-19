@@ -1,5 +1,5 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Alert,
   Button,
@@ -15,6 +15,18 @@ import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { auth, db } from './firebase';
+import {
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+} from 'firebase/firestore';
+
+
 export default function App() {
   const [markers, setMarkers] = useState([]); // Sætter use state for markers på kortet
   const [loading, setLoading] = useState(false); // Holder styr på om GPS-lokationen indlæses
@@ -28,6 +40,70 @@ export default function App() {
   const [editingMarkerId, setEditingMarkerId] = useState(null); // Holder styr på hvilken marker der redigeres
   const [viewingMarker, setViewingMarker] = useState(null); // Marker der vises uden redigering
   const [imageUri, setImageUri] = useState(null); // Holder styr på det valgte billede
+
+
+  // Henter brugerens markers fra Firestore
+  useEffect(() => {
+    let unsubscribeMarkers = null;
+
+    // Venter på at Firebase Authentication er klar
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      // Stopper den tidligere Firestore-lytter
+      if (unsubscribeMarkers) {
+        unsubscribeMarkers();
+        unsubscribeMarkers = null;
+      }
+
+      if (!user) {
+        setMarkers([]);
+        return;
+      }
+
+      // Finder den aktuelle brugers markers i Firestore
+      const markersRef = collection(db, 'users', user.uid, 'markers');
+
+      // Lytter efter ændringer i databasen
+      unsubscribeMarkers = onSnapshot(
+        markersRef,
+        (snapshot) => {
+          const savedMarkers = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+
+          setMarkers(savedMarkers);
+        },
+        (error) => {
+          console.error('Firestore fejl:', error);
+        }
+      );
+    });
+
+    // Rydder op når komponenten afmonteres
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeMarkers) unsubscribeMarkers();
+    };
+  }, []);
+
+
+  // Tester anonym Firebase Authentication
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        console.log('Firebase bruger logget ind:', user.uid);
+      } else {
+        try {
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.error('Firebase login fejl:', error);
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
 
   function addMarker(event) {
     const coordinate = event.nativeEvent.coordinate; // Finder koordinater for tryk
@@ -110,6 +186,7 @@ export default function App() {
   }
 
 
+
   // Sletter den valgte marker efter bekræftelse
   function deleteMarker() {
     if (!viewingMarker) return;
@@ -127,13 +204,34 @@ export default function App() {
         {
           text: 'Slet',
           style: 'destructive',
-          onPress: () => {
-            // Fjerner markeren fra listen
-            setMarkers((currentMarkers) =>
-              currentMarkers.filter((marker) => marker.id !== markerId)
-            );
+          onPress: async () => {
+            const user = auth.currentUser;
 
-            setViewingMarker(null); // Lukker notevisningen
+            if (!user) {
+              Alert.alert('Fejl', 'Brugeren er ikke logget ind.');
+              return;
+            }
+
+            try {
+              // Finder markeren i Firestore
+              const markerRef = doc(
+                db,
+                'users',
+                user.uid,
+                'markers',
+                markerId
+              );
+
+              // Sletter markeren permanent fra Firestore
+              await deleteDoc(markerRef);
+
+              // onSnapshot opdaterer automatisk listen af markers
+              setViewingMarker(null); // Lukker notevisningen
+
+            } catch (error) {
+              console.error('Fejl ved sletning af marker:', error);
+              Alert.alert('Fejl', 'Kunne ikke slette markeren.');
+            }
           },
         },
       ]
@@ -141,43 +239,60 @@ export default function App() {
   }
 
 
-  // Gemmer en ny marker eller opdaterer en eksisterende
-  function saveMarker() {
+
+ 
+  // Gemmer en ny marker eller opdaterer en eksisterende i Firestore
+  async function saveMarker() {
     if (!selectedCoordinate) {
       return;
     }
 
+    const user = auth.currentUser;
+
+    if (!user) {
+      Alert.alert('Fejl', 'Brugeren er ikke logget ind.');
+      return;
+    }
 
     const markerData = {
       coordinate: selectedCoordinate,
       title: title.trim() || 'Unavngivet sted', // Standardtitel hvis feltet er tomt
       note: note.trim(), // Noten må gerne være tom
-      imageUri, // Gemmer billedets URI sammen med markeren
     };
 
+    try {
+      if (editingMarkerId !== null) {
+        // Opdaterer den eksisterende marker i Firestore
+        const markerRef = doc(
+          db,
+          'users',
+          user.uid,
+          'markers',
+          editingMarkerId
+        );
 
-    if (editingMarkerId !== null) {
-      // Opdaterer den eksisterende marker
-      setMarkers((currentMarkers) =>
-        currentMarkers.map((marker) =>
-          marker.id === editingMarkerId
-            ? { ...marker, ...markerData }
-            : marker
-        )
-      );
-    } else {
-      // Tilføjer en ny marker til listen
-      setMarkers((currentMarkers) => [
-        ...currentMarkers,
-        {
-          id: Date.now().toString(),
-          ...markerData,
-        },
-      ]);
+        await updateDoc(markerRef, markerData);
+      } else {
+        // Opretter en ny marker i Firestore
+        const markersRef = collection(
+          db,
+          'users',
+          user.uid,
+          'markers'
+        );
+
+        await addDoc(markersRef, markerData);
+      }
+
+      // Lukker formularen når ændringerne er gemt
+      closeModal();
+
+    } catch (error) {
+      console.error('Fejl ved gemning af marker:', error);
+      Alert.alert('Fejl', 'Kunne ikke gemme markeren.');
     }
-
-    closeModal();
   }
+
 
 
   // Lukker formularen og nulstiller felterne
